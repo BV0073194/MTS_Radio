@@ -12,10 +12,10 @@ const __dirname = path.dirname(__filename);
 
 const queueFolder = path.join(__dirname, 'queue'); // Folder for queued songs
 const placeholderFile = path.join(__dirname, 'placeholder.mp3'); // Placeholder audio file
-let currentFile = null; // Current file being streamed
-let currentStream = null; // Readable stream for the current file
 let listeners = []; // List of connected listeners
-let position = 0; // Current playback position (bytes)
+let currentStream = null; // The current shared stream
+let currentFile = null; // The current file being played
+let isPlayingPlaceholder = false;
 
 // Ensure queue folder exists
 if (!fs.existsSync(queueFolder)) {
@@ -44,43 +44,29 @@ function broadcastAudio(chunk) {
   });
 }
 
-// Start streaming a file (shared state)
+// Start streaming a file to all listeners
 function startStreamingFile(filePath) {
-  if (filePath !== placeholderFile) {
-    console.log(`Now streaming: ${filePath}`);
-  }
-
+  console.log(`Streaming: ${filePath}`);
   currentFile = filePath;
-  currentStream = fs.createReadStream(filePath, { start: position });
+  isPlayingPlaceholder = filePath === placeholderFile;
+
+  currentStream = fs.createReadStream(filePath);
 
   currentStream.on('data', chunk => {
-    position += chunk.length;
-    broadcastAudio(chunk); // Send chunk to all listeners
+    broadcastAudio(chunk); // Send audio chunk to all connected listeners
   });
 
   currentStream.on('end', () => {
-    if (filePath !== placeholderFile) {
-      console.log(`Finished streaming: ${filePath}`);
+    console.log(`Finished streaming: ${filePath}`);
+    if (!isPlayingPlaceholder && filePath !== placeholderFile) {
+      fs.unlinkSync(filePath); // Delete the file after it's done playing
     }
-
-    position = 0;
-    currentFile = null;
-    currentStream = null;
-
-    if (filePath !== placeholderFile) {
-      fs.unlinkSync(filePath); // Remove file after all listeners have finished
-    }
-
-    // Start the next file or placeholder
-    playNextInQueue();
+    playNextInQueue(); // Move to the next song or the placeholder
   });
 
   currentStream.on('error', err => {
     console.error(`Error streaming ${filePath}:`, err);
-    position = 0;
-    currentFile = null;
-    currentStream = null;
-    startStreamingFile(placeholderFile); // Fallback to placeholder
+    playNextInQueue(); // Fallback to the next song or placeholder
   });
 }
 
@@ -91,7 +77,7 @@ function playNextInQueue() {
     const nextFile = path.join(queueFolder, queue[0]);
     startStreamingFile(nextFile);
   } else {
-    startStreamingFile(placeholderFile); // Play placeholder if queue is empty
+    startStreamingFile(placeholderFile); // Play the placeholder if the queue is empty
   }
 }
 
@@ -105,25 +91,6 @@ function handleNewListener(res) {
 
   listeners.push(res);
 
-  // If there is an ongoing stream, serve from the current position
-  if (currentFile) {
-    const listenerStream = fs.createReadStream(currentFile, { start: position });
-
-    listenerStream.on('data', chunk => {
-      res.write(chunk);
-    });
-
-    listenerStream.on('end', () => {
-      res.end();
-    });
-
-    listenerStream.on('error', err => {
-      console.error('Error sending data to listener:', err);
-      res.end();
-    });
-  }
-
-  // Remove listener on disconnect
   res.on('close', () => {
     console.log('Listener disconnected.');
     listeners = listeners.filter(listener => listener !== res);
@@ -134,6 +101,13 @@ function handleNewListener(res) {
 const server = http.createServer((req, res) => {
   if (req.url === '/audio.mp3') {
     handleNewListener(res);
+
+    // If a stream is already playing, immediately start sending chunks
+    if (currentStream) {
+      const listenerStream = fs.createReadStream(currentFile, { start: currentStream.bytesRead });
+      listenerStream.on('data', chunk => res.write(chunk));
+      listenerStream.on('end', () => res.end());
+    }
   } else {
     res.writeHead(404, { 'Content-Type': 'text/plain' });
     res.end('404 Not Found');
@@ -143,7 +117,7 @@ const server = http.createServer((req, res) => {
 // Start the server
 server.listen(8000, () => {
   console.log('Server is running at http://localhost:8000/audio.mp3');
-  playNextInQueue(); // Start streaming
+  playNextInQueue(); // Start the stream
 });
 
 // CLI for queue management
