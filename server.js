@@ -1,180 +1,178 @@
-const express = require("express");
-const fs = require("fs");
-const fetch = require("node-fetch");
-const path = require("path");
-const readline = require("readline");
+import express from "express";
+import multer from "multer";
+import fetch from "node-fetch";
+import fs from "fs";
+import path from "path";
+import ffmpeg from "fluent-ffmpeg";
 
 const app = express();
 const PORT = 8000;
 
-// Global song queue
+// Configure file uploads
+const upload = multer({ dest: "uploads/" });
+
+// Global variables
 let songQueue = [];
+let currentSongIndex = 0;
+let isPlaying = false;
 
-// Helper to download MP3
-async function downloadSong(url, filePath) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Failed to fetch: ${res.statusText}`);
-  const fileStream = fs.createWriteStream(filePath);
-  await new Promise((resolve, reject) => {
-    res.body.pipe(fileStream);
-    res.body.on("error", reject);
-    fileStream.on("finish", resolve);
-  });
-  console.log(`Downloaded: ${filePath}`);
-}
+let isStreaming = false; // Prevent multiple streams
+let currentTimestamp = 0; // Track the current position in the song
 
-// Add a song to the queue
-async function addToQueue(url) {
-  const fileName = path.basename(url);
-  const filePath = path.join(__dirname, "songs", fileName);
 
-  if (!fs.existsSync(path.join(__dirname, "songs"))) {
-    fs.mkdirSync(path.join(__dirname, "songs"));
-  }
+// Create "songs" directory if it doesn't exist
+const songsDir = path.join(process.cwd(), "songs");
+if (!fs.existsSync(songsDir)) fs.mkdirSync(songsDir);
 
-  try {
-    await downloadSong(url, filePath);
-    songQueue.push(filePath);
-    console.log(`Added to queue: ${filePath}`);
-  } catch (error) {
-    console.error(`Failed to add song: ${error.message}`);
-  }
-}
+// Serve static files for web interface
+app.use(express.static("public"));
 
-// Remove a song from the queue
-function removeFromQueue(index) {
-  if (index < 0 || index >= songQueue.length) {
-    console.log("Invalid index. Please try again.");
-    return;
-  }
-  const removed = songQueue.splice(index, 1);
-  console.log(`Removed from queue: ${removed}`);
-}
+// Parse JSON body
+app.use(express.json());
 
-// List the queue
-function listQueue() {
-  if (songQueue.length === 0) {
-    console.log("The queue is empty.");
-  } else {
-    console.log("Current queue:");
-    songQueue.forEach((song, index) => {
-      console.log(`${index}: ${song}`);
+// Helper to download a song from a URL
+async function downloadFromURL(url) {
+    const fileName = path.basename(url);
+    const filePath = path.join(songsDir, fileName);
+
+    const response = await fetch(url);
+    if (!response.ok) {
+        throw new Error(`Failed to download song: ${response.statusText}`);
+    }
+
+    const fileStream = fs.createWriteStream(filePath);
+    await new Promise((resolve, reject) => {
+        response.body.pipe(fileStream);
+        response.body.on("error", reject);
+        fileStream.on("finish", resolve);
     });
-  }
+
+    console.log(`Downloaded song from URL to: ${filePath}`);
+    return { path: filePath, name: fileName };
 }
 
-// Stream the audio queue
-function streamSongs(req, res) {
-  if (songQueue.length === 0) {
-    res.status(200).send("No songs in the queue!");
-    return;
-  }
+// Live update for queue display
+app.get("/queue", (req, res) => {
+    res.json({
+        currentSong: songQueue[currentSongIndex]?.name || "No song playing",
+        queue: songQueue.map((song, idx) => ({
+            index: idx,
+            name: path.basename(song.path),
+        })),
+    });
+});
 
-  let currentSongIndex = 0;
+// File upload endpoint
+app.post("/upload", upload.single("file"), (req, res) => {
+    const tempPath = req.file.path;
+    const targetPath = path.join(songsDir, req.file.originalname);
 
-  const playNextSong = () => {
+    fs.rename(tempPath, targetPath, (err) => {
+        if (err) {
+            console.error("Error saving file:", err);
+            return res.status(500).send("Error saving file.");
+        }
+
+        songQueue.push({ path: targetPath, name: req.file.originalname });
+        console.log(`Added to queue: ${req.file.originalname}`);
+        res.redirect("/");
+    });
+});
+
+// URL-based upload endpoint
+app.post("/upload-url", async (req, res) => {
+    const { url } = req.body;
+    if (!url) {
+        return res.status(400).send("Please provide a valid URL.");
+    }
+
+    try {
+        const song = await downloadFromURL(url);
+        songQueue.push(song);
+        res.redirect("/");
+    } catch (error) {
+        console.error(error);
+        res.status(500).send("Failed to download the song.");
+    }
+});
+
+// Stream endpoint
+app.get("/stream.mp3", (req, res) => {
+    if (songQueue.length === 0) {
+        res.status(200).send("No songs in the queue.");
+        return;
+    }
+
+    if (isStreaming) {
+        res.status(400).send("Streaming is already in progress.");
+        return;
+    }
+
+    isStreaming = true;
+
+    const currentSong = songQueue[currentSongIndex];
+    const startAt = currentTimestamp;
+
+    console.log(`Streaming song: ${currentSong.name}`);
+
+    const ffmpegStream = ffmpeg(currentSong.path)
+        .seekInput(startAt) // Start from the current timestamp
+        .audioCodec("libmp3lame")
+        .format("mp3");
+
+    res.writeHead(200, {
+        "Content-Type": "audio/mpeg",
+        "Transfer-Encoding": "chunked",
+    });
+
+    ffmpegStream.pipe(res);
+
+    // Cleanup when the client disconnects
+    res.on("close", () => {
+        ffmpegStream.kill("SIGKILL");
+        isStreaming = false;
+        console.log("Client disconnected. Stopped streaming.");
+    });
+
+    // Handle ffmpeg errors
+    ffmpegStream.on("error", (err) => {
+        console.error(`FFmpeg error: ${err.message}`);
+        res.end();
+        isStreaming = false;
+    });
+});
+
+
+function playNextSong() {
     if (currentSongIndex >= songQueue.length) {
-      res.end(); // End stream when no songs are left
-      return;
+        currentSongIndex = 0;
+        isPlaying = false;
+        return;
     }
 
-    const currentSongPath = songQueue[currentSongIndex];
-    const readStream = fs.createReadStream(currentSongPath);
+    const songPath = songQueue[currentSongIndex]?.path;
+    const songDuration = getAudioDuration(songPath);
 
-    readStream.pipe(res, { end: false });
-    readStream.on("end", () => {
-      currentSongIndex++;
-      playNextSong();
-    });
+    console.log(`Now playing: ${songQueue[currentSongIndex]?.name}`);
+    currentTimestamp = 0;
 
-    readStream.on("error", (err) => {
-      console.error(`Error streaming song: ${err.message}`);
-      res.end();
-    });
-  };
-
-  res.writeHead(200, {
-    "Content-Type": "audio/mpeg",
-    "Transfer-Encoding": "chunked",
-  });
-  playNextSong();
+    setTimeout(() => {
+        currentSongIndex++;
+        playNextSong();
+    }, songDuration * 1000);
 }
 
-// API Endpoints
-app.post("/add-song", async (req, res) => {
-  const songUrl = req.query.url;
-  if (!songUrl) {
-    return res.status(400).send("Please provide a song URL as a query parameter.");
-  }
-
-  await addToQueue(songUrl);
-  res.send("Song added to the queue!");
-});
-
-// Streaming endpoint
-app.get("/audio.mp3", (req, res) => {
-  streamSongs(req, res);
-});
-
-// Command-Line Interface
-function startCLI() {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    prompt: "queue> ",
-  });
-
-  console.log("CLI started. Available commands:");
-  console.log("  add <url> - Add a song to the queue");
-  console.log("  remove <index> - Remove a song from the queue");
-  console.log("  list - List the current queue");
-  console.log("  exit - Exit the CLI");
-
-  rl.prompt();
-
-  rl.on("line", async (line) => {
-    const [command, ...args] = line.trim().split(" ");
-
-    switch (command) {
-      case "add":
-        if (args.length === 0) {
-          console.log("Usage: add <url>");
-        } else {
-          await addToQueue(args[0]);
-        }
-        break;
-
-      case "remove":
-        if (args.length === 0 || isNaN(parseInt(args[0], 10))) {
-          console.log("Usage: remove <index>");
-        } else {
-          removeFromQueue(parseInt(args[0], 10));
-        }
-        break;
-
-      case "list":
-        listQueue();
-        break;
-
-      case "exit":
-        rl.close();
-        process.exit(0);
-        break;
-
-      default:
-        console.log("Unknown command. Available commands: add, remove, list, exit");
-    }
-
-    rl.prompt();
-  });
-
-  rl.on("close", () => {
-    console.log("CLI closed.");
-  });
+function getAudioDuration(filePath) {
+    // Mock function; implement FFmpeg probe if needed
+    return 180; // Assume 3 minutes for simplicity
 }
 
-// Start the server and CLI
+// Web interface for uploads and queue
+app.get("/", (req, res) => {
+    res.sendFile(path.join(process.cwd(), "public", "index.html"));
+});
+
+// Start server
 app.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
-  startCLI();
+    console.log(`Server running at http://localhost:${PORT}`);
 });

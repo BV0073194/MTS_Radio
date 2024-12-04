@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Radio Stream</title>
+</head>
+<body>
+    <h1>Live Radio Stream</h1>
+    <audio controls autoplay>
+        <source src="/stream.mp3" type="audio/mpeg">
+        Your browser does not support the audio element.
+    </audio>
+    <h2>Upload a Song</h2>
+    <form action="/upload" method="post" enctype="multipart/form-data">
+        <input type="file" name="file" accept="audio/mp3" required>
+        <button type="submit">Upload File</button>
+    </form>
+    <h2>Upload from URL</h2>
+    <form action="/upload-url" method="post">
+        <input type="text" name="url" placeholder="Enter MP3 URL" required>
+        <button type="submit">Upload from URL</button>
+    </form>
+    <h2>Current Queue</h2>
+    <ul id="queue"></ul>
+    <script>
+        async function updateQueue() {
+            const response = await fetch("/queue");
+            const { currentSong, queue } = await response.json();
+
+            document.querySelector("h2").innerText = `Now Playing: ${currentSong}`;
+            const queueList = document.getElementById("queue");
+            queueList.innerHTML = queue.map(song => `<li>${song.name}</li>`).join("");
+        }
+
+        setInterval(updateQueue, 5000); // Update every 5 seconds
+        updateQueue();
+    </script>
+</body>
+</html>
