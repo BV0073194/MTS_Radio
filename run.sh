@@ -1,3 +1,3 @@
-sudo apt update
-sudo apt install -y ffmpeg
-npm i && node server.js
+npm init -y
+npm install express multer fluent-ffmpeg ffmpeg-static
+npm start

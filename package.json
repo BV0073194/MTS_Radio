@@ -1,18 +1,18 @@
 {
-  "name": "audio-streamer",
+  "name": "streaming-server",
   "version": "1.0.0",
-  "description": "A live radio streaming server with queue and upload functionality.",
-  "main": "server.js",
-  "type": "module",
+  "description": "Real-time MP3 live streaming server with FFmpeg",
+  "main": "src/app.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node src/app.js"
   },
   "dependencies": {
-    "express": "^4.18.2",
-    "fluent-ffmpeg": "^2.1.2",
-    "multer": "^1.4.5-lts.1",
-    "node-fetch": "^3.3.2"
+    "express": "^4.21.1",
+    "ffmpeg-static": "^4.4.1",
+    "fluent-ffmpeg": "^2.1.3",
+    "multer": "^1.4.5-lts.1"
   },
-  "author": "Your Name",
-  "license": "MIT"
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
 }

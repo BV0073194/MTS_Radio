@@ -3,38 +3,72 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Live Radio Stream</title>
+    <title>Live Stream Upload</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            margin: 0;
+            padding: 20px;
+        }
+        h1 {
+            color: #333;
+        }
+        form {
+            margin-top: 20px;
+        }
+        input[type="file"] {
+            margin-bottom: 20px;
+        }
+        button {
+            padding: 10px 20px;
+            background-color: #007BFF;
+            border: none;
+            color: white;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+    </style>
 </head>
 <body>
-    <h1>Live Radio Stream</h1>
-    <audio controls autoplay>
-        <source src="/stream.mp3" type="audio/mpeg">
-        Your browser does not support the audio element.
-    </audio>
-    <h2>Upload a Song</h2>
-    <form action="/upload" method="post" enctype="multipart/form-data">
-        <input type="file" name="file" accept="audio/mp3" required>
-        <button type="submit">Upload File</button>
+    <h1>Live Stream: Upload Songs</h1>
+    <p>Upload an MP3 file to add it to the queue.</p>
+    <form id="uploadForm" method="POST" action="/upload" enctype="multipart/form-data">
+        <input type="file" name="audio" accept="audio/mp3" required>
+        <br>
+        <button type="submit">Upload</button>
     </form>
-    <h2>Upload from URL</h2>
-    <form action="/upload-url" method="post">
-        <input type="text" name="url" placeholder="Enter MP3 URL" required>
-        <button type="submit">Upload from URL</button>
-    </form>
-    <h2>Current Queue</h2>
-    <ul id="queue"></ul>
+    <p id="message" style="color: green;"></p>
+
     <script>
-        async function updateQueue() {
-            const response = await fetch("/queue");
-            const { currentSong, queue } = await response.json();
+        const form = document.getElementById("uploadForm");
+        const message = document.getElementById("message");
 
-            document.querySelector("h2").innerText = `Now Playing: ${currentSong}`;
-            const queueList = document.getElementById("queue");
-            queueList.innerHTML = queue.map(song => `<li>${song.name}</li>`).join("");
-        }
+        form.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            message.textContent = "Uploading...";
 
-        setInterval(updateQueue, 5000); // Update every 5 seconds
-        updateQueue();
+            const formData = new FormData(form);
+
+            try {
+                const response = await fetch("/upload", {
+                    method: "POST",
+                    body: formData,
+                });
+
+                if (response.ok) {
+                    message.textContent = "File uploaded successfully and added to the queue!";
+                } else {
+                    const errorText = await response.text();
+                    message.textContent = `Error: ${errorText}`;
+                }
+            } catch (err) {
+                console.error(err);
+                message.textContent = "An error occurred during the upload.";
+            }
+        });
     </script>
 </body>
 </html>
