@@ -4,6 +4,7 @@ import fetch from 'node-fetch';
 import readline from 'readline';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { Readable } from 'stream';
 
 // Polyfill for __dirname and __filename in ESM
 const __filename = fileURLToPath(import.meta.url);
@@ -15,6 +16,10 @@ const queueFolder = path.join(__dirname, 'queue'); // Folder to hold the queued 
 if (!fs.existsSync(queueFolder)) {
   fs.mkdirSync(queueFolder);
 }
+
+let clients = [];
+let currentStream = null;
+let currentFile = null;
 
 // Function to download an MP3 from a URL and add it to the queue
 async function downloadMP3(url, songName, author) {
@@ -48,46 +53,51 @@ function getQueue() {
   return files;
 }
 
-// Function to clear all or a specific file in the queue
-function clearQueue(index = null) {
-  const files = getQueue();
-  if (index === null) {
-    // Clear all files
-    files.forEach(file => fs.unlinkSync(path.join(queueFolder, file)));
-    console.log('Queue cleared.');
-  } else if (index >= 1 && index <= files.length) {
-    const filePath = path.join(queueFolder, files[index - 1]);
-    fs.unlinkSync(filePath);
-    console.log(`Removed song ${index} from the queue.`);
+// Function to play the next song in the queue
+function playNext() {
+  if (currentStream) {
+    currentStream.destroy();
+    currentStream = null;
+  }
+
+  const queue = getQueue();
+  if (queue.length > 0) {
+    currentFile = path.join(queueFolder, queue[0]);
+    console.log(`Now playing: ${queue[0]}`);
+    currentStream = fs.createReadStream(currentFile);
+
+    currentStream.on('data', (chunk) => {
+      clients.forEach((res) => res.write(chunk));
+    });
+
+    currentStream.on('end', () => {
+      console.log(`Finished playing: ${queue[0]}`);
+      fs.unlinkSync(currentFile); // Delete the file after playing
+      currentFile = null;
+      playNext(); // Move to the next song
+    });
+
+    currentStream.on('error', (err) => {
+      console.error(`Error streaming file: ${err}`);
+      playNext(); // Skip to the next song if there's an error
+    });
   } else {
-    console.log('Invalid song number.');
+    console.log('Queue is empty. Waiting for new songs...');
   }
 }
 
-// HTTP Server to stream the current file in the queue
-http.createServer((req, res) => {
+// HTTP Server to handle live streaming and HTML page
+const server = http.createServer((req, res) => {
   if (req.url === '/audio.mp3') {
-    const queue = getQueue();
-    if (queue.length > 0) {
-      const nextFile = path.join(queueFolder, queue[0]);
-      res.writeHead(200, { 'Content-Type': 'audio/mpeg' });
-      const stream = fs.createReadStream(nextFile);
+    res.writeHead(200, { 'Content-Type': 'audio/mpeg' });
+    clients.push(res);
 
-      stream.pipe(res);
+    // Remove client when they disconnect
+    req.on('close', () => {
+      clients = clients.filter(client => client !== res);
+    });
 
-      stream.on('end', () => {
-        console.log(`Finished streaming: ${nextFile}`);
-        fs.unlinkSync(nextFile); // Delete the file after streaming
-      });
-
-      stream.on('error', (err) => {
-        console.error(`Error streaming file: ${err}`);
-        res.end();
-      });
-    } else {
-      res.writeHead(404, { 'Content-Type': 'text/plain' });
-      res.end('No audio files in the queue. Please upload one.');
-    }
+    console.log('New listener connected.');
   } else {
     res.writeHead(200, { 'Content-Type': 'text/html' });
     res.end(`
@@ -96,12 +106,12 @@ http.createServer((req, res) => {
       <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Audio Stream</title>
+        <title>Live Stream</title>
       </head>
       <body>
-        <h1>Streaming Audio</h1>
-        <p>Listen to the stream:</p>
-        <audio controls>
+        <h1>Live Streaming Radio</h1>
+        <p>Listen to the live stream:</p>
+        <audio controls autoplay>
           <source src="/audio.mp3" type="audio/mpeg">
           Your browser does not support the audio element.
         </audio>
@@ -109,9 +119,12 @@ http.createServer((req, res) => {
       </html>
     `);
   }
-}).listen(8000);
+});
 
-console.log('Streaming on http://localhost:8000');
+// Start the server
+server.listen(8000, () => {
+  console.log('Server running at http://localhost:8000');
+});
 
 // CLI for uploading and managing the queue
 const rl = readline.createInterface({
@@ -128,13 +141,14 @@ console.log('  queue clear <n>  - Remove a specific song from the queue');
 rl.on('line', async (input) => {
   if (input.startsWith('upload: ')) {
     const url = input.slice(8).trim();
-    console.log(`Processing upload command for URL: ${url}`);
-
     rl.question('Enter song name: ', (songName) => {
       rl.question('Enter author name: ', async (author) => {
         try {
           await downloadMP3(url, songName, author);
           console.log(`Song "${songName}" by "${author}" added to the queue.`);
+          if (!currentStream) {
+            playNext();
+          }
         } catch (error) {
           console.error('Error downloading the file:', error);
         }
@@ -152,13 +166,16 @@ rl.on('line', async (input) => {
       console.log('The queue is empty.');
     }
   } else if (input === 'queue clear') {
-    clearQueue();
+    getQueue().forEach(file => fs.unlinkSync(path.join(queueFolder, file)));
+    console.log('Queue cleared.');
   } else if (input.startsWith('queue clear ')) {
     const index = parseInt(input.slice(12).trim(), 10);
-    if (isNaN(index)) {
-      console.log('Invalid command. Please specify a valid song number.');
+    const queue = getQueue();
+    if (!isNaN(index) && index > 0 && index <= queue.length) {
+      fs.unlinkSync(path.join(queueFolder, queue[index - 1]));
+      console.log(`Removed song ${index} from the queue.`);
     } else {
-      clearQueue(index);
+      console.log('Invalid song number.');
     }
   } else {
     console.log('Unknown command. Use "upload: <url>", "queue show", "queue clear", or "queue clear <n>".');
