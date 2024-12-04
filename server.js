@@ -4,7 +4,7 @@ import fetch from 'node-fetch';
 import readline from 'readline';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { Readable } from 'stream';
+import { execSync } from 'child_process'; // Use import for child_process
 
 // Polyfill for __dirname and __filename in ESM
 const __filename = fileURLToPath(import.meta.url);
@@ -20,9 +20,11 @@ if (!fs.existsSync(queueFolder)) {
 
 // Ensure silence file exists
 if (!fs.existsSync(silenceFile)) {
+  console.log('Generating silence.mp3...');
   // Generate a 1-second silent MP3 using FFmpeg
   const silenceCommand = `ffmpeg -f lavfi -i anullsrc=r=44100:cl=stereo -t 1 -q:a 9 -acodec libmp3lame ${silenceFile}`;
-  require('child_process').execSync(silenceCommand);
+  execSync(silenceCommand);
+  console.log('silence.mp3 generated.');
 }
 
 let clients = []; // List of connected clients
