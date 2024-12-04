@@ -4,7 +4,7 @@ import fetch from 'node-fetch';
 import readline from 'readline';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { execSync } from 'child_process'; // Use execSync to generate silent MP3 if needed
+import { execSync } from 'child_process';
 
 // Polyfill for __dirname and __filename in ESM
 const __filename = fileURLToPath(import.meta.url);
@@ -21,7 +21,6 @@ if (!fs.existsSync(queueFolder)) {
 // Ensure placeholder file exists
 if (!fs.existsSync(placeholderFile)) {
   console.log('Generating placeholder.mp3...');
-  // Generate a 5-second silent MP3 using FFmpeg
   const placeholderCommand = `ffmpeg -f lavfi -i anullsrc=r=44100:cl=stereo -t 5 -q:a 9 -acodec libmp3lame ${placeholderFile}`;
   execSync(placeholderCommand);
   console.log('placeholder.mp3 generated.');
@@ -33,7 +32,7 @@ let isPlayingPlaceholder = false; // Flag to indicate if the placeholder is bein
 
 // Function to download an MP3 from a URL and add it to the queue
 async function downloadMP3(url, songName, author) {
-  const sanitizedSongName = songName.replace(/[^a-zA-Z0-9]/g, '_'); // Sanitize for safe filenames
+  const sanitizedSongName = songName.replace(/[^a-zA-Z0-9]/g, '_');
   const sanitizedAuthor = author.replace(/[^a-zA-Z0-9]/g, '_');
   const fileName = `${Date.now()}_${sanitizedAuthor}_${sanitizedSongName}.mp3`;
   const filePath = path.join(queueFolder, fileName);
@@ -73,8 +72,7 @@ function playFile(filePath) {
 
   currentStream.on('end', () => {
     if (filePath === placeholderFile) {
-      // Loop placeholder if no songs are in the queue
-      playFile(placeholderFile);
+      playFile(placeholderFile); // Loop placeholder if no songs are in the queue
     } else {
       console.log(`Finished playing: ${filePath}`);
       fs.unlinkSync(filePath); // Delete the file after playing
@@ -109,44 +107,26 @@ function playNext() {
   }
 }
 
-// HTTP Server to handle live streaming and HTML page
+// HTTP Server to handle live streaming
 const server = http.createServer((req, res) => {
   if (req.url === '/audio.mp3') {
     res.writeHead(200, { 'Content-Type': 'audio/mpeg' });
     clients.push(res);
 
-    // Remove client when they disconnect
     req.on('close', () => {
       clients = clients.filter(client => client !== res);
     });
 
-    console.log('New listener connected.');
+    console.log('New listener connected to the audio stream.');
   } else {
-    res.writeHead(200, { 'Content-Type': 'text/html' });
-    res.end(`
-      <!DOCTYPE html>
-      <html lang="en">
-      <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Live Stream</title>
-      </head>
-      <body>
-        <h1>Live Streaming Radio</h1>
-        <p>Listen to the live stream:</p>
-        <audio controls autoplay>
-          <source src="/audio.mp3" type="audio/mpeg">
-          Your browser does not support the audio element.
-        </audio>
-      </body>
-      </html>
-    `);
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    res.end('404 Not Found');
   }
 });
 
 // Start the server
 server.listen(8000, () => {
-  console.log('Server running at http://localhost:8000');
+  console.log('Server running at http://localhost:8000/audio.mp3');
   playNext(); // Start playing the first song or placeholder
 });
 
