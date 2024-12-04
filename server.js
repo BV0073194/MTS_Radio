@@ -12,6 +12,10 @@ const __dirname = path.dirname(__filename);
 
 const queueFolder = path.join(__dirname, 'queue'); // Folder for queued songs
 const placeholderFile = path.join(__dirname, 'placeholder.mp3'); // Placeholder audio file
+let currentFile = null; // Current file being streamed
+let currentStream = null; // Readable stream for the current file
+let listeners = []; // List of connected listeners
+let position = 0; // Current playback position (bytes)
 
 // Ensure queue folder exists
 if (!fs.existsSync(queueFolder)) {
@@ -33,50 +37,97 @@ function getQueue() {
   return files;
 }
 
-// Stream audio to clients
-function streamAudio(res) {
-  const queue = getQueue();
-  const currentFile = queue.length > 0 ? path.join(queueFolder, queue[0]) : placeholderFile;
-
-  console.log(`Streaming: ${currentFile}`);
-  const stream = fs.createReadStream(currentFile);
-
-  stream.on('data', chunk => {
-    res.write(chunk); // Send audio data to the client
-  });
-
-  stream.on('end', () => {
-    if (currentFile === placeholderFile) {
-      console.log('Looping placeholder audio...');
-      streamAudio(res); // Loop placeholder if no songs are in the queue
-    } else {
-      console.log(`Finished streaming: ${currentFile}`);
-      fs.unlinkSync(currentFile); // Delete song after playback
-      streamAudio(res); // Play the next song or loop placeholder
-    }
-  });
-
-  stream.on('error', err => {
-    console.error(`Error streaming ${currentFile}:`, err);
-    streamAudio(res); // Retry with placeholder on error
+// Broadcast audio chunks to all listeners
+function broadcastAudio(chunk) {
+  listeners.forEach(listener => {
+    listener.write(chunk);
   });
 }
 
-// HTTP Server
-const server = http.createServer((req, res) => {
-  if (req.url === '/audio.mp3') {
-    console.log('New listener connected.');
-    res.writeHead(200, {
-      'Content-Type': 'audio/mpeg',
-      'Transfer-Encoding': 'chunked',
+// Start streaming a file (shared state)
+function startStreamingFile(filePath) {
+  console.log(`Now streaming: ${filePath}`);
+  currentFile = filePath;
+  currentStream = fs.createReadStream(filePath, { start: position });
+
+  currentStream.on('data', chunk => {
+    position += chunk.length;
+    broadcastAudio(chunk); // Send chunk to all listeners
+  });
+
+  currentStream.on('end', () => {
+    console.log(`Finished streaming: ${filePath}`);
+    position = 0;
+    currentFile = null;
+    currentStream = null;
+
+    if (filePath !== placeholderFile) {
+      fs.unlinkSync(filePath); // Remove file after all listeners have finished
+    }
+
+    // Start the next file or placeholder
+    playNextInQueue();
+  });
+
+  currentStream.on('error', err => {
+    console.error(`Error streaming ${filePath}:`, err);
+    position = 0;
+    currentFile = null;
+    currentStream = null;
+    startStreamingFile(placeholderFile); // Fallback to placeholder
+  });
+}
+
+// Play the next file in the queue or the placeholder
+function playNextInQueue() {
+  const queue = getQueue();
+  if (queue.length > 0) {
+    const nextFile = path.join(queueFolder, queue[0]);
+    startStreamingFile(nextFile);
+  } else {
+    startStreamingFile(placeholderFile); // Play placeholder if queue is empty
+  }
+}
+
+// Handle a new listener connection
+function handleNewListener(res) {
+  console.log('New listener connected.');
+  res.writeHead(200, {
+    'Content-Type': 'audio/mpeg',
+    'Transfer-Encoding': 'chunked',
+  });
+
+  listeners.push(res);
+
+  // If there is an ongoing stream, serve from the current position
+  if (currentFile) {
+    const listenerStream = fs.createReadStream(currentFile, { start: position });
+
+    listenerStream.on('data', chunk => {
+      res.write(chunk);
     });
 
-    streamAudio(res);
-
-    req.on('close', () => {
-      console.log('Listener disconnected.');
+    listenerStream.on('end', () => {
       res.end();
     });
+
+    listenerStream.on('error', err => {
+      console.error('Error sending data to listener:', err);
+      res.end();
+    });
+  }
+
+  // Remove listener on disconnect
+  res.on('close', () => {
+    console.log('Listener disconnected.');
+    listeners = listeners.filter(listener => listener !== res);
+  });
+}
+
+// HTTP server for streaming
+const server = http.createServer((req, res) => {
+  if (req.url === '/audio.mp3') {
+    handleNewListener(res);
   } else {
     res.writeHead(404, { 'Content-Type': 'text/plain' });
     res.end('404 Not Found');
@@ -86,6 +137,7 @@ const server = http.createServer((req, res) => {
 // Start the server
 server.listen(8000, () => {
   console.log('Server is running at http://localhost:8000/audio.mp3');
+  playNextInQueue(); // Start streaming
 });
 
 // CLI for queue management
