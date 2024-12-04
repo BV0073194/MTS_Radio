@@ -1,5 +1,7 @@
 import http from 'http';
 import fs from 'fs';
+import readline from 'readline';
+import fetch from 'node-fetch';
 import path from 'path';
 import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
@@ -8,15 +10,15 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const queueFolder = path.join(__dirname, 'queue'); // Folder to store queued songs
-const placeholderFile = path.join(__dirname, 'placeholder.mp3'); // Placeholder audio for silence or default music
+const queueFolder = path.join(__dirname, 'queue'); // Folder for queued songs
+const placeholderFile = path.join(__dirname, 'placeholder.mp3'); // Placeholder audio file
 
-// Ensure the queue folder exists
+// Ensure queue folder exists
 if (!fs.existsSync(queueFolder)) {
   fs.mkdirSync(queueFolder);
 }
 
-// Ensure the placeholder file exists
+// Ensure placeholder file exists
 if (!fs.existsSync(placeholderFile)) {
   console.log('Generating placeholder.mp3...');
   const command = `ffmpeg -f lavfi -i anullsrc=r=44100:cl=stereo -t 5 -acodec libmp3lame ${placeholderFile}`;
@@ -27,17 +29,16 @@ if (!fs.existsSync(placeholderFile)) {
 // Get the list of queued songs
 function getQueue() {
   const files = fs.readdirSync(queueFolder).filter(file => file.endsWith('.mp3'));
-  files.sort(); // Ensure songs are played in the order they were added
+  files.sort(); // Ensure songs play in the order they were added
   return files;
 }
 
-// Stream audio data to clients
+// Stream audio to clients
 function streamAudio(res) {
   const queue = getQueue();
   const currentFile = queue.length > 0 ? path.join(queueFolder, queue[0]) : placeholderFile;
 
   console.log(`Streaming: ${currentFile}`);
-
   const stream = fs.createReadStream(currentFile);
 
   stream.on('data', chunk => {
@@ -57,11 +58,11 @@ function streamAudio(res) {
 
   stream.on('error', err => {
     console.error(`Error streaming ${currentFile}:`, err);
-    streamAudio(res); // Retry with placeholder
+    streamAudio(res); // Retry with placeholder on error
   });
 }
 
-// Create an HTTP server
+// HTTP Server
 const server = http.createServer((req, res) => {
   if (req.url === '/audio.mp3') {
     console.log('New listener connected.');
@@ -77,7 +78,6 @@ const server = http.createServer((req, res) => {
       res.end();
     });
   } else {
-    console.log(`404 for ${req.url}`);
     res.writeHead(404, { 'Content-Type': 'text/plain' });
     res.end('404 Not Found');
   }
@@ -86,4 +86,76 @@ const server = http.createServer((req, res) => {
 // Start the server
 server.listen(8000, () => {
   console.log('Server is running at http://localhost:8000/audio.mp3');
+});
+
+// CLI for queue management
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+});
+
+console.log('Commands:');
+console.log('  upload: <url>    - Download and queue an MP3 for streaming');
+console.log('  queue show       - Show the current queue');
+console.log('  queue clear      - Clear the entire queue');
+console.log('  queue clear <n>  - Remove a specific song from the queue');
+
+rl.on('line', async (input) => {
+  if (input.startsWith('upload: ')) {
+    const url = input.slice(8).trim();
+    rl.question('Enter song name: ', (songName) => {
+      rl.question('Enter author name: ', async (author) => {
+        const sanitizedSongName = songName.replace(/[^a-zA-Z0-9]/g, '_');
+        const sanitizedAuthor = author.replace(/[^a-zA-Z0-9]/g, '_');
+        const fileName = `${Date.now()}_${sanitizedAuthor}_${sanitizedSongName}.mp3`;
+        const filePath = path.join(queueFolder, fileName);
+
+        try {
+          console.log(`Downloading from: ${url}`);
+          const response = await fetch(url);
+
+          if (!response.ok) {
+            console.error(`Failed to download: ${response.statusText}`);
+            return;
+          }
+
+          const fileStream = fs.createWriteStream(filePath);
+          await new Promise((resolve, reject) => {
+            response.body.pipe(fileStream);
+            response.body.on('error', reject);
+            fileStream.on('finish', resolve);
+          });
+
+          console.log(`Added to queue: ${fileName}`);
+        } catch (error) {
+          console.error('Error downloading the file:', error);
+        }
+      });
+    });
+  } else if (input === 'queue show') {
+    const queue = getQueue();
+    if (queue.length > 0) {
+      console.log('Current queue:');
+      queue.forEach((file, index) => {
+        const [timestamp, author, songName] = file.split('_').map(decodeURIComponent);
+        console.log(`${index + 1}. ${songName.replace('.mp3', '')} by ${author}`);
+      });
+    } else {
+      console.log('The queue is empty.');
+    }
+  } else if (input === 'queue clear') {
+    getQueue().forEach(file => fs.unlinkSync(path.join(queueFolder, file)));
+    console.log('Queue cleared.');
+  } else if (input.startsWith('queue clear ')) {
+    const index = parseInt(input.slice(12).trim(), 10);
+    const queue = getQueue();
+    if (!isNaN(index) && index > 0 && index <= queue.length) {
+      fs.unlinkSync(path.join(queueFolder, queue[index - 1]));
+      console.log(`Removed song ${index} from the queue.`);
+    } else {
+      console.log('Invalid song number.');
+    }
+  } else {
+    console.log('Unknown command. Use "upload: <url>", "queue show", "queue clear", or "queue clear <n>".');
+  }
 });
