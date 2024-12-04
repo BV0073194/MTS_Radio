@@ -1,36 +1,91 @@
 import express from "express";
-import { streamSongs, addSongToQueue, listQueue, removeFromQueue } from "./stream.js";
 import multer from "multer";
+import path from "path";
+import fs from "fs";
+import fetch from "node-fetch";
+import { fileURLToPath } from "url";
+import { addSongToQueue, streamSongs, listQueue, removeFromQueue } from "./stream.js";
+
+// Define __dirname for ES module scope
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = 8000;
 
+// Middleware to parse JSON body
+app.use(express.json());
+
 // Configure file uploads
 const upload = multer({ dest: "uploads/" });
 
-// Upload endpoint
-app.post("/upload", upload.single("song"), (req, res) => {
-    if (!req.file) {
-        return res.status(400).send("No file uploaded.");
+// Ensure the "songs" directory exists
+const songsDir = path.join(__dirname, "songs");
+if (!fs.existsSync(songsDir)) {
+    fs.mkdirSync(songsDir);
+}
+
+// Helper function to download an MP3 file
+async function downloadFromURL(url, dest) {
+    const response = await fetch(url);
+    if (!response.ok) {
+        throw new Error(`Failed to download file: ${response.statusText}`);
     }
-    const songPath = `uploads/${req.file.filename}`;
-    addSongToQueue(songPath);
-    res.send(`Uploaded and added to queue: ${req.file.originalname}`);
+
+    const fileStream = fs.createWriteStream(dest);
+    await new Promise((resolve, reject) => {
+        response.body.pipe(fileStream);
+        response.body.on("error", reject);
+        fileStream.on("finish", resolve);
+    });
+    console.log(`Downloaded file from URL to: ${dest}`);
+    return dest;
+}
+
+// Add songs to the queue when downloaded
+app.post("/upload", async (req, res) => {
+    const songUrl = req.body.url;
+    if (!songUrl) {
+        return res.status(400).send("Please provide a valid URL.");
+    }
+
+    try {
+        const fileName = path.basename(songUrl);
+        const filePath = path.join(songsDir, fileName);
+
+        await downloadFromURL(songUrl, filePath);
+
+        addSongToQueue(filePath); // Add to queue
+        res.send(`Song downloaded and added to queue: ${filePath}`);
+    } catch (error) {
+        console.error(error);
+        res.status(500).send("Failed to download the song.");
+    }
 });
 
-// Streaming endpoint
-app.get("/audio.mp3", streamSongs);
+// Stream endpoint
+app.get("/stream.mp3", (req, res) => {
+    streamSongs(req, res);
+});
 
-// Queue management API
-app.get("/queue", (req, res) => res.json(listQueue()));
-app.post("/queue/remove", (req, res) => {
-    const index = parseInt(req.query.index, 10);
-    if (isNaN(index)) return res.status(400).send("Invalid index.");
+// API to list the current queue
+app.get("/queue", (req, res) => {
+    const queue = listQueue();
+    res.json(queue);
+});
+
+// API to remove a song from the queue
+app.delete("/queue/:index", (req, res) => {
+    const index = parseInt(req.params.index, 10);
+    if (isNaN(index)) {
+        return res.status(400).send("Invalid index.");
+    }
+
     removeFromQueue(index);
-    res.send("Removed song from queue.");
+    res.send(`Removed song at index: ${index}`);
 });
 
 // Start the server
 app.listen(PORT, () => {
-    console.log(`Server is running at http://localhost:${PORT}/audio.mp3`);
+    console.log(`Server is running on http://localhost:${PORT}`);
 });
