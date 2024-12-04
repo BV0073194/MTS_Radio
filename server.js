@@ -52,42 +52,44 @@ function broadcastAudio(chunk) {
 
 // Start streaming a file
 function startStreamingFile(filePath) {
-  const stats = fs.statSync(filePath);
+  try {
+    const stats = fs.statSync(filePath);
 
-  if (filePath !== placeholderFile) {
-    logWithTimestamp(`Starting playback: ${path.basename(filePath)} (Size: ${stats.size} bytes)`);
-  }
+    if (filePath !== placeholderFile) {
+      logWithTimestamp(`Starting playback: ${path.basename(filePath)} (Size: ${stats.size} bytes)`);
+    }
 
-  if (stats.size === 0) {
-    logWithTimestamp(`Error: File ${path.basename(filePath)} is empty. Skipping.`);
+    if (stats.size === 0) {
+      logWithTimestamp(`Error: File ${path.basename(filePath)} is empty. Skipping.`);
+      playNextInQueue();
+      return;
+    }
+
+    currentFile = filePath;
+    isPlayingPlaceholder = filePath === placeholderFile;
+    currentStream = fs.createReadStream(filePath);
+
+    currentStream.on('data', chunk => {
+      broadcastAudio(chunk); // Send audio chunk to all listeners
+    });
+
+    currentStream.on('end', () => {
+      if (filePath !== placeholderFile) {
+        logWithTimestamp(`Finished playing: ${path.basename(filePath)}`);
+        fs.unlinkSync(filePath); // Remove the file after it's done
+      }
+      playNextInQueue(); // Move to the next song or the placeholder
+    });
+
+    currentStream.on('error', err => {
+      logWithTimestamp(`Error streaming ${filePath}: ${err.message}`);
+      playNextInQueue(); // Fallback to the next song or placeholder
+    });
+  } catch (error) {
+    logWithTimestamp(`Error accessing file ${filePath}: ${error.message}`);
     playNextInQueue();
-    return;
   }
-
-  currentFile = filePath;
-  isPlayingPlaceholder = filePath === placeholderFile;
-  currentStream = fs.createReadStream(filePath);
-
-  currentStream.on('data', chunk => {
-    broadcastAudio(chunk); // Send audio chunk to all listeners
-  });
-
-  currentStream.on('end', () => {
-    if (filePath !== placeholderFile) {
-      logWithTimestamp(`Finished playing: ${path.basename(filePath)}`);
-    }
-    if (filePath !== placeholderFile) {
-      fs.unlinkSync(filePath); // Remove the file after it's done
-    }
-    playNextInQueue(); // Move to the next song or the placeholder
-  });
-
-  currentStream.on('error', err => {
-    logWithTimestamp(`Error streaming ${filePath}: ${err.message}`);
-    playNextInQueue(); // Fallback to the next song or placeholder
-  });
 }
-
 
 // Play the next file in the queue or the placeholder
 function playNextInQueue() {
@@ -176,8 +178,8 @@ rl.on('line', async (input) => {
           const stats = fs.statSync(filePath);
           logWithTimestamp(`File downloaded: ${fileName} (Size: ${stats.size} bytes)`);
 
-          if (stats.size !== parseInt(response.headers.get('content-length'), 10)) {
-            logWithTimestamp('Error: Downloaded file size does not match expected size.');
+          if (stats.size < 1024) {
+            logWithTimestamp('Error: File size is too small to be valid. Skipping.');
             fs.unlinkSync(filePath); // Remove incomplete file
             return;
           }
@@ -191,30 +193,5 @@ rl.on('line', async (input) => {
         }
       });
     });
-  } else if (input === 'queue show') {
-    const queue = getQueue();
-    if (queue.length > 0) {
-      logWithTimestamp('Current queue:');
-      queue.forEach((file, index) => {
-        const [timestamp, author, songName] = file.split('_').map(decodeURIComponent);
-        logWithTimestamp(`${index + 1}. ${songName.replace('.mp3', '')} by ${author}`);
-      });
-    } else {
-      logWithTimestamp('The queue is empty.');
-    }
-  } else if (input === 'queue clear') {
-    getQueue().forEach(file => fs.unlinkSync(path.join(queueFolder, file)));
-    logWithTimestamp('Queue cleared.');
-  } else if (input.startsWith('queue clear ')) {
-    const index = parseInt(input.slice(12).trim(), 10);
-    const queue = getQueue();
-    if (!isNaN(index) && index > 0 && index <= queue.length) {
-      fs.unlinkSync(path.join(queueFolder, queue[index - 1]));
-      logWithTimestamp(`Removed song ${index} from the queue.`);
-    } else {
-      logWithTimestamp('Invalid song number.');
-    }
-  } else {
-    logWithTimestamp('Unknown command. Use "upload: <url>", "queue show", "queue clear", or "queue clear <n>".');
   }
 });
