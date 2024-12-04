@@ -66,26 +66,48 @@ function clearQueue(index = null) {
 
 // HTTP Server to stream the current file in the queue
 http.createServer((req, res) => {
-  const queue = getQueue();
-  if (queue.length > 0) {
-    const nextFile = path.join(queueFolder, queue[0]);
-    res.writeHead(200, { 'Content-Type': 'audio/mpeg' });
-    const stream = fs.createReadStream(nextFile);
+  if (req.url === '/audio.mp3') {
+    const queue = getQueue();
+    if (queue.length > 0) {
+      const nextFile = path.join(queueFolder, queue[0]);
+      res.writeHead(200, { 'Content-Type': 'audio/mpeg' });
+      const stream = fs.createReadStream(nextFile);
 
-    stream.pipe(res);
+      stream.pipe(res);
 
-    stream.on('end', () => {
-      console.log(`Finished streaming: ${nextFile}`);
-      fs.unlinkSync(nextFile); // Delete the file after streaming
-    });
+      stream.on('end', () => {
+        console.log(`Finished streaming: ${nextFile}`);
+        fs.unlinkSync(nextFile); // Delete the file after streaming
+      });
 
-    stream.on('error', (err) => {
-      console.error(`Error streaming file: ${err}`);
-      res.end();
-    });
+      stream.on('error', (err) => {
+        console.error(`Error streaming file: ${err}`);
+        res.end();
+      });
+    } else {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.end('No audio files in the queue. Please upload one.');
+    }
   } else {
-    res.writeHead(404, { 'Content-Type': 'text/plain' });
-    res.end('No audio files in the queue. Please upload one.');
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(`
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Audio Stream</title>
+      </head>
+      <body>
+        <h1>Streaming Audio</h1>
+        <p>Listen to the stream:</p>
+        <audio controls>
+          <source src="/audio.mp3" type="audio/mpeg">
+          Your browser does not support the audio element.
+        </audio>
+      </body>
+      </html>
+    `);
   }
 }).listen(8000);
 
