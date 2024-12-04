@@ -34,9 +34,10 @@ function getQueue() {
 // Stream audio data to clients
 function streamAudio(res) {
   const queue = getQueue();
-
-  // Determine the file to stream: either the next song or the placeholder
   const currentFile = queue.length > 0 ? path.join(queueFolder, queue[0]) : placeholderFile;
+
+  console.log(`Streaming: ${currentFile}`);
+
   const stream = fs.createReadStream(currentFile);
 
   stream.on('data', chunk => {
@@ -45,6 +46,7 @@ function streamAudio(res) {
 
   stream.on('end', () => {
     if (currentFile === placeholderFile) {
+      console.log('Looping placeholder audio...');
       streamAudio(res); // Loop placeholder if no songs are in the queue
     } else {
       console.log(`Finished streaming: ${currentFile}`);
@@ -75,6 +77,7 @@ const server = http.createServer((req, res) => {
       res.end();
     });
   } else {
+    console.log(`404 for ${req.url}`);
     res.writeHead(404, { 'Content-Type': 'text/plain' });
     res.end('404 Not Found');
   }
