@@ -5,26 +5,28 @@ const ffmpeg = require("fluent-ffmpeg");
 global.audioQueue = [];
 
 let listeners = [];
-let currentSongStartTime = null;
-let currentSongDuration = 0;
-let staticNoiseInterval = null;
-let currentSource = null;
-let currentAudioType = null; // Track the current type of audio being played
-const BUFFER_SIZE = 50; // Adjusted buffer size for sufficient buffering without overloading
-const audioBuffer = [];
+let currentSongStartTime = null; // Track when the current song starts
+let currentSongDuration = 0; // Store the current song duration
+let staticNoiseInterval = null; // Track the static noise broadcasting interval
+let currentSource = null; // Track the current playing source (song or static noise)
+const BUFFER_SIZE = 50; // Adjusted buffer size to ensure sufficient buffering without overloading
+const audioBuffer = []; // Circular buffer for recent audio chunks
 
 // Path to the static noise file in ./public
 const staticNoisePath = path.join(__dirname, "../public/static-noise.mp3");
 
+// Ensure the static noise file exists
 if (!fs.existsSync(staticNoisePath)) {
     console.error(`[ERROR] Static noise file not found at: ${staticNoisePath}`);
     process.exit(1);
 }
 
+// Read the static noise file into memory
 const staticNoiseBuffer = fs.readFileSync(staticNoisePath);
-const STATIC_NOISE_CHUNK_SIZE = 1024;
+const STATIC_NOISE_CHUNK_SIZE = 1024; // Optimal chunk size for lower latency
 let staticOffset = 0;
 
+// Function to get the current timestamp for logging
 const getCurrentTimestamp = () => {
     return new Date().toISOString();
 };
@@ -47,27 +49,30 @@ const streamAudio = (req, res) => {
         "Cache-Control": "no-cache, must-revalidate",
         "Pragma": "no-cache",
         "Connection": "keep-alive",
-        "Transfer-Encoding": "chunked",
+        "Transfer-Encoding": "chunked", // Continuous streaming
         "icy-name": "Live Stream",
         "icy-genre": "Various",
     });
 
     console.log(`[${getCurrentTimestamp()}] [INFO] New listener connected.`);
 
+    // Send buffered audio to the new listener so they start hearing what's currently being played
     audioBuffer.forEach((chunk) => res.write(chunk));
 
+    // Add the listener to the active list
     listeners.push(res);
 
+    // Remove listener on disconnect
     req.on("close", () => {
         console.log(`[${getCurrentTimestamp()}] [INFO] Listener disconnected.`);
         listeners = listeners.filter((listener) => listener !== res);
     });
 };
 
-// Play the next audio file in the queue
+// Play the next audio file in the queue, seamlessly transitioning from static or other songs
 const playNextAudio = () => {
     if (global.audioQueue.length > 0) {
-        stopCurrentSource();
+        stopCurrentSource(); // Stop whatever is currently playing
 
         const nextAudioPath = global.audioQueue.shift();
         const resolvedPath = path.resolve(nextAudioPath);
@@ -79,6 +84,7 @@ const playNextAudio = () => {
             return;
         }
 
+        // Get the duration of the audio file using ffmpeg
         ffmpeg.ffprobe(resolvedPath, (err, metadata) => {
             if (err) {
                 console.error(`[${getCurrentTimestamp()}] [ERROR] Error retrieving metadata for ${resolvedPath}:`, err);
@@ -86,11 +92,13 @@ const playNextAudio = () => {
                 return;
             }
 
-            currentSongDuration = metadata.format.duration * 1000;
-            currentSongStartTime = Date.now();
-            currentAudioType = "song";
+            currentSongDuration = metadata.format.duration * 1000; // Convert duration to milliseconds
+            console.log(`[${getCurrentTimestamp()}] [DEBUG] File duration: ${metadata.format.duration} seconds`);
 
-            currentSource = fs.createReadStream(resolvedPath, { highWaterMark: 64 * 1024 });
+            // Set the start time when the song actually starts playing
+            currentSongStartTime = Date.now();
+
+            currentSource = fs.createReadStream(resolvedPath, { highWaterMark: 64 * 1024 }); // Increased highWaterMark to 64KB
 
             currentSource.on("data", (chunk) => {
                 bufferAudio(chunk);
@@ -100,12 +108,14 @@ const playNextAudio = () => {
             currentSource.on("error", (err) => {
                 console.error(`[${getCurrentTimestamp()}] [ERROR] Streaming error: ${err.message}`);
                 stopCurrentSource();
-                playStaticNoise();
+                playStaticNoise(); // Fallback to static noise on error
             });
 
+            // Custom checker to determine if the song has finished playing based on elapsed time
             setTimeout(() => {
-                console.log(`[${getCurrentTimestamp()}] [INFO] Song is over.`);
+                console.log(`[${getCurrentTimestamp()}] [INFO] Song is over, elapsed time reached.`);
 
+                // Delete the file after it has finished playing
                 fs.unlink(resolvedPath, (err) => {
                     if (err) {
                         console.error(`[${getCurrentTimestamp()}] [ERROR] Failed to delete file ${resolvedPath}:`, err);
@@ -115,6 +125,7 @@ const playNextAudio = () => {
                 });
 
                 stopCurrentSource();
+                // Play the next song in the queue or fallback to static noise
                 if (global.audioQueue.length > 0) {
                     playNextAudio();
                 } else {
@@ -127,32 +138,29 @@ const playNextAudio = () => {
     }
 };
 
-// Stop the current audio source
+// Stop current audio source (either static or song)
 const stopCurrentSource = () => {
     if (currentSource && typeof currentSource.destroy === "function") {
-        currentSource.destroy();
+        currentSource.destroy(); // Stop current stream if it's a readable stream
         currentSource = null;
     }
     if (staticNoiseInterval) {
-        clearInterval(staticNoiseInterval);
+        clearInterval(staticNoiseInterval); // Clear interval if it's for static noise
         staticNoiseInterval = null;
     }
-    currentAudioType = null;
 };
 
-// Continuously play static noise in a seamless loop
+// Continuously play static noise in a seamless loop with a regular interval
 const playStaticNoise = () => {
     if (currentSource || staticNoiseInterval) {
         console.log("[DEBUG] Current stream is active, skipping static noise.");
-        return;
+        return; // Avoid interrupting if something is already streaming
     }
-
-    currentAudioType = "static";
 
     staticNoiseInterval = setInterval(() => {
         if (global.audioQueue.length > 0) {
             stopCurrentSource();
-            playNextAudio();
+            playNextAudio(); // Interrupt static noise if a new song is added
             return;
         }
 
@@ -162,16 +170,16 @@ const playStaticNoise = () => {
 
         staticOffset += STATIC_NOISE_CHUNK_SIZE;
         if (staticOffset >= staticNoiseBuffer.length) {
-            staticOffset = 0;
+            staticOffset = 0; // Loop back to the start
         }
-    }, 100);
+    }, 100); // Consistent interval of 100ms to keep the stream active
 };
 
 // Buffer audio chunks for new listeners to catch up
 const bufferAudio = (chunk) => {
     audioBuffer.push(chunk);
     if (audioBuffer.length > BUFFER_SIZE) {
-        audioBuffer.shift();
+        audioBuffer.shift(); // Keep buffer size within the limit
     }
 };
 
@@ -191,6 +199,7 @@ const addToQueueAndPlay = (filePath) => {
     global.audioQueue.push(filePath);
     console.log(`[${getCurrentTimestamp()}] [INFO] Added to queue: ${filePath}`);
 
+    // Always play the next song immediately when it's added
     if (!currentSource && !staticNoiseInterval) {
         playNextAudio();
     }
