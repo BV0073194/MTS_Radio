@@ -155,6 +155,7 @@ rl.on('line', async (input) => {
             return;
           }
 
+          // Ensure the file is fully downloaded
           const fileStream = fs.createWriteStream(filePath);
           await new Promise((resolve, reject) => {
             response.body.pipe(fileStream);
@@ -163,6 +164,9 @@ rl.on('line', async (input) => {
           });
 
           logWithTimestamp(`Added to queue: ${fileName}`);
+          if (isPlayingPlaceholder) {
+            playNextInQueue(); // Start playback if placeholder is playing
+          }
         } catch (error) {
           logWithTimestamp(`Error downloading the file: ${error.message}`);
         }
