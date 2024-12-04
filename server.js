@@ -53,7 +53,10 @@ function broadcastAudio(chunk) {
 // Start streaming a file
 function startStreamingFile(filePath) {
   const stats = fs.statSync(filePath);
-  logWithTimestamp(`Starting playback: ${path.basename(filePath)} (Size: ${stats.size} bytes)`);
+
+  if (filePath !== placeholderFile) {
+    logWithTimestamp(`Starting playback: ${path.basename(filePath)} (Size: ${stats.size} bytes)`);
+  }
 
   if (stats.size === 0) {
     logWithTimestamp(`Error: File ${path.basename(filePath)} is empty. Skipping.`);
@@ -70,7 +73,9 @@ function startStreamingFile(filePath) {
   });
 
   currentStream.on('end', () => {
-    logWithTimestamp(`Finished playing: ${path.basename(filePath)}`);
+    if (filePath !== placeholderFile) {
+      logWithTimestamp(`Finished playing: ${path.basename(filePath)}`);
+    }
     if (filePath !== placeholderFile) {
       fs.unlinkSync(filePath); // Remove the file after it's done
     }
@@ -82,6 +87,7 @@ function startStreamingFile(filePath) {
     playNextInQueue(); // Fallback to the next song or placeholder
   });
 }
+
 
 // Play the next file in the queue or the placeholder
 function playNextInQueue() {
