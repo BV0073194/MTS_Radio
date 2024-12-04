@@ -11,15 +11,24 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const queueFolder = path.join(__dirname, 'queue'); // Folder to hold the queued songs
+const silenceFile = path.join(__dirname, 'silence.mp3'); // Placeholder audio for silence
 
 // Ensure the queue folder exists
 if (!fs.existsSync(queueFolder)) {
   fs.mkdirSync(queueFolder);
 }
 
-let clients = [];
-let currentStream = null;
-let currentFile = null;
+// Ensure silence file exists
+if (!fs.existsSync(silenceFile)) {
+  // Generate a 1-second silent MP3 using FFmpeg
+  const silenceCommand = `ffmpeg -f lavfi -i anullsrc=r=44100:cl=stereo -t 1 -q:a 9 -acodec libmp3lame ${silenceFile}`;
+  require('child_process').execSync(silenceCommand);
+}
+
+let clients = []; // List of connected clients
+let currentStream = null; // The current song's stream
+let currentFile = null; // The current file being played
+let isPlayingPlaceholder = false; // Flag to indicate if the placeholder is being played
 
 // Function to download an MP3 from a URL and add it to the queue
 async function downloadMP3(url, songName, author) {
@@ -63,6 +72,7 @@ function playNext() {
   const queue = getQueue();
   if (queue.length > 0) {
     currentFile = path.join(queueFolder, queue[0]);
+    isPlayingPlaceholder = false;
     console.log(`Now playing: ${queue[0]}`);
     currentStream = fs.createReadStream(currentFile);
 
@@ -82,8 +92,30 @@ function playNext() {
       playNext(); // Skip to the next song if there's an error
     });
   } else {
-    console.log('Queue is empty. Waiting for new songs...');
+    playPlaceholder();
   }
+}
+
+// Function to play placeholder (silence or looping audio)
+function playPlaceholder() {
+  if (isPlayingPlaceholder) return; // Prevent multiple placeholders
+  console.log('Queue is empty. Playing placeholder audio.');
+
+  isPlayingPlaceholder = true;
+  currentStream = fs.createReadStream(silenceFile);
+
+  currentStream.on('data', (chunk) => {
+    clients.forEach((res) => res.write(chunk));
+  });
+
+  currentStream.on('end', () => {
+    playPlaceholder(); // Loop the placeholder
+  });
+
+  currentStream.on('error', (err) => {
+    console.error(`Error with placeholder audio: ${err}`);
+    playPlaceholder(); // Retry the placeholder if there's an error
+  });
 }
 
 // HTTP Server to handle live streaming and HTML page
@@ -124,6 +156,7 @@ const server = http.createServer((req, res) => {
 // Start the server
 server.listen(8000, () => {
   console.log('Server running at http://localhost:8000');
+  playNext(); // Start playing the first song or placeholder
 });
 
 // CLI for uploading and managing the queue
@@ -146,8 +179,8 @@ rl.on('line', async (input) => {
         try {
           await downloadMP3(url, songName, author);
           console.log(`Song "${songName}" by "${author}" added to the queue.`);
-          if (!currentStream) {
-            playNext();
+          if (!currentStream || isPlayingPlaceholder) {
+            playNext(); // Start playing if placeholder is active
           }
         } catch (error) {
           console.error('Error downloading the file:', error);
