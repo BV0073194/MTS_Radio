@@ -1,20 +1,17 @@
 {
-  "name": "MTS-radio",
+  "name": "audio-streamer",
   "version": "1.0.0",
-  "description": "A simple infinite queue-based radio streaming server.",
-  "main": "index.js",
+  "description": "A live radio streaming server with queue and upload functionality.",
+  "main": "server.js",
+  "type": "module",
   "scripts": {
-    "start": "node index.js"
+    "start": "node server.js"
   },
-  "keywords": [
-    "radio",
-    "streaming",
-    "mp3",
-    "queue"
-  ],
-  "author": "Your Name",
-  "license": "MIT",
   "dependencies": {
-    "node-fetch": "^3.3.1"
-  }
+    "express": "^4.18.2",
+    "fluent-ffmpeg": "^2.1.2",
+    "multer": "^1.4.5-lts.1"
+  },
+  "author": "Your Name",
+  "license": "MIT"
 }
