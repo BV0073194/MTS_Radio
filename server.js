@@ -4,7 +4,7 @@ import fetch from 'node-fetch';
 import readline from 'readline';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { execSync } from 'child_process'; // Use import for child_process
+import { execSync } from 'child_process'; // Use execSync to create silence.mp3 if missing
 
 // Polyfill for __dirname and __filename in ESM
 const __filename = fileURLToPath(import.meta.url);
@@ -125,6 +125,12 @@ const server = http.createServer((req, res) => {
   if (req.url === '/audio.mp3') {
     res.writeHead(200, { 'Content-Type': 'audio/mpeg' });
     clients.push(res);
+
+    // Send placeholder immediately if no song is playing
+    if (isPlayingPlaceholder) {
+      const silentStream = fs.createReadStream(silenceFile);
+      silentStream.pipe(res);
+    }
 
     // Remove client when they disconnect
     req.on('close', () => {
