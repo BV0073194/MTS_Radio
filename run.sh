@@ -1,3 +1,2 @@
-npm init -y
-npm install express multer fluent-ffmpeg ffmpeg-static
-npm start
+pip install flask flask_cors
+sudo apt-get update && sudo apt-get install -y ffmpeg
