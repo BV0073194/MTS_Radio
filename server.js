@@ -38,15 +38,11 @@ function getQueue() {
 }
 
 // Broadcast audio chunks to all listeners
-function broadcastAudio(chunk) {
-  listeners.forEach(listener => {
-    listener.write(chunk);
-  });
-}
-
-// Start streaming a file to all listeners
 function startStreamingFile(filePath) {
-  console.log(`Streaming: ${filePath}`);
+  if (filePath !== placeholderFile) {
+    console.log(`Streaming: ${filePath}`);
+  }
+
   currentFile = filePath;
   isPlayingPlaceholder = filePath === placeholderFile;
 
@@ -57,10 +53,14 @@ function startStreamingFile(filePath) {
   });
 
   currentStream.on('end', () => {
-    console.log(`Finished streaming: ${filePath}`);
+    if (filePath !== placeholderFile) {
+      console.log(`Finished streaming: ${filePath}`);
+    }
+
     if (!isPlayingPlaceholder && filePath !== placeholderFile) {
       fs.unlinkSync(filePath); // Delete the file after it's done playing
     }
+
     playNextInQueue(); // Move to the next song or the placeholder
   });
 
@@ -69,6 +69,7 @@ function startStreamingFile(filePath) {
     playNextInQueue(); // Fallback to the next song or placeholder
   });
 }
+
 
 // Play the next file in the queue or the placeholder
 function playNextInQueue() {
