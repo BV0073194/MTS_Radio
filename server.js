@@ -3,14 +3,18 @@ const fs = require("fs");
 const fetch = require("node-fetch");
 const path = require("path");
 const readline = require("readline");
+const { PassThrough } = require("stream");
 
 const app = express();
 const PORT = 8000;
 
-// Global song queue
+// Global song queue and stream state
 let songQueue = [];
+let currentStream = null; // Holds the current audio stream
+let currentSongIndex = 0; // Track current song index in the queue
+let clients = [];
 
-// Helper to download MP3
+// Helper: Download MP3
 async function downloadSong(url, filePath) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to fetch: ${res.statusText}`);
@@ -36,6 +40,9 @@ async function addToQueue(url) {
     await downloadSong(url, filePath);
     songQueue.push(filePath);
     console.log(`Added to queue: ${filePath}`);
+    if (!currentStream) {
+      startStreaming();
+    }
   } catch (error) {
     console.error(`Failed to add song: ${error.message}`);
   }
@@ -49,6 +56,11 @@ function removeFromQueue(index) {
   }
   const removed = songQueue.splice(index, 1);
   console.log(`Removed from queue: ${removed}`);
+
+  fs.unlink(removed[0], (err) => {
+    if (err) console.error(`Failed to delete file: ${err.message}`);
+    else console.log(`Deleted file: ${removed}`);
+  });
 }
 
 // List the queue
@@ -63,40 +75,38 @@ function listQueue() {
   }
 }
 
-// Stream the audio queue
-function streamSongs(req, res) {
+// Start streaming audio
+function startStreaming() {
   if (songQueue.length === 0) {
-    res.status(200).send("No songs in the queue!");
+    console.log("Queue is empty. Add songs to start streaming.");
     return;
   }
 
-  let currentSongIndex = 0;
-
   const playNextSong = () => {
     if (currentSongIndex >= songQueue.length) {
-      res.end(); // End stream when no songs are left
-      return;
+      currentSongIndex = 0; // Loop back to start
     }
 
-    const currentSongPath = songQueue[currentSongIndex];
-    const readStream = fs.createReadStream(currentSongPath);
+    const songPath = songQueue[currentSongIndex];
+    console.log(`Streaming song: ${songPath}`);
+    currentStream = fs.createReadStream(songPath);
 
-    readStream.pipe(res, { end: false });
-    readStream.on("end", () => {
+    currentStream.on("data", (chunk) => {
+      clients.forEach((res) => res.write(chunk));
+    });
+
+    currentStream.on("end", () => {
       currentSongIndex++;
       playNextSong();
     });
 
-    readStream.on("error", (err) => {
+    currentStream.on("error", (err) => {
       console.error(`Error streaming song: ${err.message}`);
-      res.end();
+      clients.forEach((res) => res.end());
+      clients = [];
     });
   };
 
-  res.writeHead(200, {
-    "Content-Type": "audio/mpeg",
-    "Transfer-Encoding": "chunked",
-  });
   playNextSong();
 }
 
@@ -111,12 +121,40 @@ app.post("/add-song", async (req, res) => {
   res.send("Song added to the queue!");
 });
 
-// Streaming endpoint
 app.get("/audio.mp3", (req, res) => {
-  streamSongs(req, res);
+  res.writeHead(200, {
+    "Content-Type": "audio/mpeg",
+    "Transfer-Encoding": "chunked",
+  });
+  clients.push(res);
+
+  req.on("close", () => {
+    clients = clients.filter((client) => client !== res);
+  });
 });
 
-// Command-Line Interface
+// Serve a simple player page
+app.get("/", (req, res) => {
+  const html = `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Live Audio Stream</title>
+    </head>
+    <body>
+        <h1>Live Stream</h1>
+        <audio controls autoplay>
+            <source src="/audio.mp3" type="audio/mpeg">
+            Your browser does not support the audio element.
+        </audio>
+    </body>
+    </html>
+  `;
+  res.send(html);
+});
+
+// CLI for queue management
 function startCLI() {
   const rl = readline.createInterface({
     input: process.stdin,
