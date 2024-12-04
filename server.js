@@ -52,10 +52,13 @@ function broadcastAudio(chunk) {
 
 // Start streaming a file
 function startStreamingFile(filePath) {
-  if (!isPlayingPlaceholder && filePath === placeholderFile) {
-    logWithTimestamp('Switching to placeholder audio...');
-  } else if (filePath !== placeholderFile) {
-    logWithTimestamp(`Now playing: ${path.basename(filePath)}`);
+  const stats = fs.statSync(filePath);
+  logWithTimestamp(`Starting playback: ${path.basename(filePath)} (Size: ${stats.size} bytes)`);
+
+  if (stats.size === 0) {
+    logWithTimestamp(`Error: File ${path.basename(filePath)} is empty. Skipping.`);
+    playNextInQueue();
+    return;
   }
 
   currentFile = filePath;
@@ -67,8 +70,8 @@ function startStreamingFile(filePath) {
   });
 
   currentStream.on('end', () => {
+    logWithTimestamp(`Finished playing: ${path.basename(filePath)}`);
     if (filePath !== placeholderFile) {
-      logWithTimestamp(`Finished playing: ${path.basename(filePath)}`);
       fs.unlinkSync(filePath); // Remove the file after it's done
     }
     playNextInQueue(); // Move to the next song or the placeholder
@@ -162,6 +165,16 @@ rl.on('line', async (input) => {
             response.body.on('error', reject);
             fileStream.on('finish', resolve);
           });
+
+          // Verify file size
+          const stats = fs.statSync(filePath);
+          logWithTimestamp(`File downloaded: ${fileName} (Size: ${stats.size} bytes)`);
+
+          if (stats.size !== parseInt(response.headers.get('content-length'), 10)) {
+            logWithTimestamp('Error: Downloaded file size does not match expected size.');
+            fs.unlinkSync(filePath); // Remove incomplete file
+            return;
+          }
 
           logWithTimestamp(`Added to queue: ${fileName}`);
           if (isPlayingPlaceholder) {
