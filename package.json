@@ -1,0 +1,20 @@
+{
+  "name": "MTS-radio",
+  "version": "1.0.0",
+  "description": "A simple infinite queue-based radio streaming server.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [
+    "radio",
+    "streaming",
+    "mp3",
+    "queue"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "dependencies": {
+    "node-fetch": "^3.3.1"
+  }
+}
