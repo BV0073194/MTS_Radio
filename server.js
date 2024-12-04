@@ -17,6 +17,12 @@ let currentStream = null; // Current audio stream
 let currentFile = null; // Current file being streamed
 let isPlayingPlaceholder = false;
 
+// Utility function to log events with timestamps
+function logWithTimestamp(message) {
+  const timestamp = new Date().toISOString();
+  console.log(`[${timestamp}] ${message}`);
+}
+
 // Ensure queue folder exists
 if (!fs.existsSync(queueFolder)) {
   fs.mkdirSync(queueFolder);
@@ -24,10 +30,10 @@ if (!fs.existsSync(queueFolder)) {
 
 // Ensure placeholder file exists
 if (!fs.existsSync(placeholderFile)) {
-  console.log('Generating placeholder.mp3...');
+  logWithTimestamp('Generating placeholder.mp3...');
   const command = `ffmpeg -f lavfi -i anullsrc=r=44100:cl=stereo -t 5 -acodec libmp3lame ${placeholderFile}`;
   execSync(command);
-  console.log('placeholder.mp3 generated.');
+  logWithTimestamp('placeholder.mp3 generated.');
 }
 
 // Get the list of queued songs
@@ -47,9 +53,9 @@ function broadcastAudio(chunk) {
 // Start streaming a file
 function startStreamingFile(filePath) {
   if (!isPlayingPlaceholder && filePath === placeholderFile) {
-    console.log('Switching to placeholder audio...');
+    logWithTimestamp('Switching to placeholder audio...');
   } else if (filePath !== placeholderFile) {
-    console.log(`Now playing: ${path.basename(filePath)}`);
+    logWithTimestamp(`Now playing: ${path.basename(filePath)}`);
   }
 
   currentFile = filePath;
@@ -62,14 +68,14 @@ function startStreamingFile(filePath) {
 
   currentStream.on('end', () => {
     if (filePath !== placeholderFile) {
-      console.log(`Finished playing: ${path.basename(filePath)}`);
+      logWithTimestamp(`Finished playing: ${path.basename(filePath)}`);
       fs.unlinkSync(filePath); // Remove the file after it's done
     }
     playNextInQueue(); // Move to the next song or the placeholder
   });
 
   currentStream.on('error', err => {
-    console.error(`Error streaming ${filePath}:`, err);
+    logWithTimestamp(`Error streaming ${filePath}: ${err.message}`);
     playNextInQueue(); // Fallback to the next song or placeholder
   });
 }
@@ -87,7 +93,7 @@ function playNextInQueue() {
 
 // Handle a new listener connection
 function handleNewListener(res) {
-  console.log('New listener connected.');
+  logWithTimestamp('New listener connected.');
   res.writeHead(200, {
     'Content-Type': 'audio/mpeg',
     'Transfer-Encoding': 'chunked',
@@ -97,7 +103,7 @@ function handleNewListener(res) {
 
   // Remove listener on disconnect
   res.on('close', () => {
-    console.log('Listener disconnected.');
+    logWithTimestamp('Listener disconnected.');
     listeners = listeners.filter(listener => listener !== res);
   });
 }
@@ -114,7 +120,7 @@ const server = http.createServer((req, res) => {
 
 // Start the server
 server.listen(8000, () => {
-  console.log('Server is live at http://localhost:8000/audio.mp3');
+  logWithTimestamp('Server is live at http://localhost:8000/audio.mp3');
   playNextInQueue(); // Start streaming
 });
 
@@ -124,11 +130,11 @@ const rl = readline.createInterface({
   output: process.stdout,
 });
 
-console.log('Commands:');
-console.log('  upload: <url>    - Download and queue an MP3 for streaming');
-console.log('  queue show       - Show the current queue');
-console.log('  queue clear      - Clear the entire queue');
-console.log('  queue clear <n>  - Remove a specific song from the queue');
+logWithTimestamp('Commands:');
+logWithTimestamp('  upload: <url>    - Download and queue an MP3 for streaming');
+logWithTimestamp('  queue show       - Show the current queue');
+logWithTimestamp('  queue clear      - Clear the entire queue');
+logWithTimestamp('  queue clear <n>  - Remove a specific song from the queue');
 
 rl.on('line', async (input) => {
   if (input.startsWith('upload: ')) {
@@ -141,11 +147,11 @@ rl.on('line', async (input) => {
         const filePath = path.join(queueFolder, fileName);
 
         try {
-          console.log(`Downloading from: ${url}`);
+          logWithTimestamp(`Downloading from: ${url}`);
           const response = await fetch(url);
 
           if (!response.ok) {
-            console.error(`Failed to download: ${response.statusText}`);
+            logWithTimestamp(`Failed to download: ${response.statusText}`);
             return;
           }
 
@@ -156,36 +162,36 @@ rl.on('line', async (input) => {
             fileStream.on('finish', resolve);
           });
 
-          console.log(`Added to queue: ${fileName}`);
+          logWithTimestamp(`Added to queue: ${fileName}`);
         } catch (error) {
-          console.error('Error downloading the file:', error);
+          logWithTimestamp(`Error downloading the file: ${error.message}`);
         }
       });
     });
   } else if (input === 'queue show') {
     const queue = getQueue();
     if (queue.length > 0) {
-      console.log('Current queue:');
+      logWithTimestamp('Current queue:');
       queue.forEach((file, index) => {
         const [timestamp, author, songName] = file.split('_').map(decodeURIComponent);
-        console.log(`${index + 1}. ${songName.replace('.mp3', '')} by ${author}`);
+        logWithTimestamp(`${index + 1}. ${songName.replace('.mp3', '')} by ${author}`);
       });
     } else {
-      console.log('The queue is empty.');
+      logWithTimestamp('The queue is empty.');
     }
   } else if (input === 'queue clear') {
     getQueue().forEach(file => fs.unlinkSync(path.join(queueFolder, file)));
-    console.log('Queue cleared.');
+    logWithTimestamp('Queue cleared.');
   } else if (input.startsWith('queue clear ')) {
     const index = parseInt(input.slice(12).trim(), 10);
     const queue = getQueue();
     if (!isNaN(index) && index > 0 && index <= queue.length) {
       fs.unlinkSync(path.join(queueFolder, queue[index - 1]));
-      console.log(`Removed song ${index} from the queue.`);
+      logWithTimestamp(`Removed song ${index} from the queue.`);
     } else {
-      console.log('Invalid song number.');
+      logWithTimestamp('Invalid song number.');
     }
   } else {
-    console.log('Unknown command. Use "upload: <url>", "queue show", "queue clear", or "queue clear <n>".');
+    logWithTimestamp('Unknown command. Use "upload: <url>", "queue show", "queue clear", or "queue clear <n>".');
   }
 });
