@@ -4,32 +4,31 @@ import fetch from 'node-fetch';
 import readline from 'readline';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { execSync } from 'child_process'; // Use execSync to create silence.mp3 if missing
+import { execSync } from 'child_process'; // Use execSync to generate silent MP3 if needed
 
 // Polyfill for __dirname and __filename in ESM
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const queueFolder = path.join(__dirname, 'queue'); // Folder to hold the queued songs
-const silenceFile = path.join(__dirname, 'silence.mp3'); // Placeholder audio for silence
+const placeholderFile = path.join(__dirname, 'placeholder.mp3'); // Placeholder audio for silence or default music
 
 // Ensure the queue folder exists
 if (!fs.existsSync(queueFolder)) {
   fs.mkdirSync(queueFolder);
 }
 
-// Ensure silence file exists
-if (!fs.existsSync(silenceFile)) {
-  console.log('Generating silence.mp3...');
-  // Generate a 1-second silent MP3 using FFmpeg
-  const silenceCommand = `ffmpeg -f lavfi -i anullsrc=r=44100:cl=stereo -t 1 -q:a 9 -acodec libmp3lame ${silenceFile}`;
-  execSync(silenceCommand);
-  console.log('silence.mp3 generated.');
+// Ensure placeholder file exists
+if (!fs.existsSync(placeholderFile)) {
+  console.log('Generating placeholder.mp3...');
+  // Generate a 5-second silent MP3 using FFmpeg
+  const placeholderCommand = `ffmpeg -f lavfi -i anullsrc=r=44100:cl=stereo -t 5 -q:a 9 -acodec libmp3lame ${placeholderFile}`;
+  execSync(placeholderCommand);
+  console.log('placeholder.mp3 generated.');
 }
 
 let clients = []; // List of connected clients
 let currentStream = null; // The current song's stream
-let currentFile = null; // The current file being played
 let isPlayingPlaceholder = false; // Flag to indicate if the placeholder is being played
 
 // Function to download an MP3 from a URL and add it to the queue
@@ -64,60 +63,50 @@ function getQueue() {
   return files;
 }
 
-// Function to play the next song in the queue
-function playNext() {
-  if (currentStream) {
-    currentStream.destroy();
-    currentStream = null;
-  }
-
-  const queue = getQueue();
-  if (queue.length > 0) {
-    currentFile = path.join(queueFolder, queue[0]);
-    isPlayingPlaceholder = false;
-    console.log(`Now playing: ${queue[0]}`);
-    currentStream = fs.createReadStream(currentFile);
-
-    currentStream.on('data', (chunk) => {
-      clients.forEach((res) => res.write(chunk));
-    });
-
-    currentStream.on('end', () => {
-      console.log(`Finished playing: ${queue[0]}`);
-      fs.unlinkSync(currentFile); // Delete the file after playing
-      currentFile = null;
-      playNext(); // Move to the next song
-    });
-
-    currentStream.on('error', (err) => {
-      console.error(`Error streaming file: ${err}`);
-      playNext(); // Skip to the next song if there's an error
-    });
-  } else {
-    playPlaceholder();
-  }
-}
-
-// Function to play placeholder (silence or looping audio)
-function playPlaceholder() {
-  if (isPlayingPlaceholder) return; // Prevent multiple placeholders
-  console.log('Queue is empty. Playing placeholder audio.');
-
-  isPlayingPlaceholder = true;
-  currentStream = fs.createReadStream(silenceFile);
+// Function to play a file (song or placeholder)
+function playFile(filePath) {
+  currentStream = fs.createReadStream(filePath);
 
   currentStream.on('data', (chunk) => {
     clients.forEach((res) => res.write(chunk));
   });
 
   currentStream.on('end', () => {
-    playPlaceholder(); // Loop the placeholder
+    if (filePath === placeholderFile) {
+      // Loop placeholder if no songs are in the queue
+      playFile(placeholderFile);
+    } else {
+      console.log(`Finished playing: ${filePath}`);
+      fs.unlinkSync(filePath); // Delete the file after playing
+      playNext(); // Move to the next song
+    }
   });
 
   currentStream.on('error', (err) => {
-    console.error(`Error with placeholder audio: ${err}`);
-    playPlaceholder(); // Retry the placeholder if there's an error
+    console.error(`Error streaming file: ${err}`);
+    if (filePath !== placeholderFile) {
+      playNext(); // Skip to the next song if there's an error
+    } else {
+      playFile(placeholderFile); // Retry the placeholder if there's an error
+    }
   });
+}
+
+// Function to play the next song in the queue
+function playNext() {
+  const queue = getQueue();
+  if (queue.length > 0) {
+    const nextFile = path.join(queueFolder, queue[0]);
+    console.log(`Now playing: ${queue[0]}`);
+    isPlayingPlaceholder = false;
+    playFile(nextFile);
+  } else {
+    if (!isPlayingPlaceholder) {
+      console.log('Queue is empty. Playing placeholder audio.');
+      isPlayingPlaceholder = true;
+      playFile(placeholderFile);
+    }
+  }
 }
 
 // HTTP Server to handle live streaming and HTML page
@@ -125,12 +114,6 @@ const server = http.createServer((req, res) => {
   if (req.url === '/audio.mp3') {
     res.writeHead(200, { 'Content-Type': 'audio/mpeg' });
     clients.push(res);
-
-    // Send placeholder immediately if no song is playing
-    if (isPlayingPlaceholder) {
-      const silentStream = fs.createReadStream(silenceFile);
-      silentStream.pipe(res);
-    }
 
     // Remove client when they disconnect
     req.on('close', () => {
@@ -187,7 +170,7 @@ rl.on('line', async (input) => {
         try {
           await downloadMP3(url, songName, author);
           console.log(`Song "${songName}" by "${author}" added to the queue.`);
-          if (!currentStream || isPlayingPlaceholder) {
+          if (isPlayingPlaceholder) {
             playNext(); // Start playing if placeholder is active
           }
         } catch (error) {
