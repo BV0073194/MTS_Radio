@@ -38,6 +38,13 @@ function getQueue() {
 }
 
 // Broadcast audio chunks to all listeners
+function broadcastAudio(chunk) {
+  listeners.forEach(listener => {
+    listener.write(chunk);
+  });
+}
+
+// Start streaming a file to all listeners
 function startStreamingFile(filePath) {
   if (filePath !== placeholderFile) {
     console.log(`Streaming: ${filePath}`);
