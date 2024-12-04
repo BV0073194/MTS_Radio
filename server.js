@@ -46,7 +46,10 @@ function broadcastAudio(chunk) {
 
 // Start streaming a file (shared state)
 function startStreamingFile(filePath) {
-  console.log(`Now streaming: ${filePath}`);
+  if (filePath !== placeholderFile) {
+    console.log(`Now streaming: ${filePath}`);
+  }
+
   currentFile = filePath;
   currentStream = fs.createReadStream(filePath, { start: position });
 
@@ -56,7 +59,10 @@ function startStreamingFile(filePath) {
   });
 
   currentStream.on('end', () => {
-    console.log(`Finished streaming: ${filePath}`);
+    if (filePath !== placeholderFile) {
+      console.log(`Finished streaming: ${filePath}`);
+    }
+
     position = 0;
     currentFile = null;
     currentStream = null;
