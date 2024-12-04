@@ -1,10 +1,15 @@
-const http = require('http');
-const fs = require('fs');
-const fetch = require('node-fetch');
-const readline = require('readline');
-const path = require('path');
+import http from 'http';
+import fs from 'fs';
+import fetch from 'node-fetch';
+import readline from 'readline';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-const queueFolder = 'queue'; // Folder to hold the queued songs
+// Polyfill for __dirname and __filename in ESM
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const queueFolder = path.join(__dirname, 'queue'); // Folder to hold the queued songs
 
 // Ensure the queue folder exists
 if (!fs.existsSync(queueFolder)) {
