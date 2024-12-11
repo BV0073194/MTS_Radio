@@ -1,8 +1,9 @@
-from flask import Flask, Response
+from flask import Flask, Response, request
 import os
 import random
 import requests
 import threading
+import time
 
 def get_song_list():
     """Reads the MP3 files and extracts song titles and artists from filenames."""
@@ -57,11 +58,13 @@ def cli_menu():
             song_choice = input("Enter the song number or 'R' for random: ")
             if song_choice.lower() == "r":
                 print("Starting random cycle...")
-                current_stream.append("random")
+                current_stream["choice"] = "random"
+                current_stream["start_time"] = time.time()
             elif song_choice.isdigit() and 1 <= int(song_choice) <= len(songs):
                 selected_song = songs[int(song_choice) - 1]
                 print(f"Playing: {selected_song['title']} - {selected_song['artist']}")
-                current_stream.append(selected_song['filename'])
+                current_stream["choice"] = selected_song['filename']
+                current_stream["start_time"] = time.time()
             else:
                 print("Invalid choice.")
 
@@ -82,11 +85,11 @@ MP3_DIR = "./mp3_files"
 if not os.path.exists(MP3_DIR):
     os.makedirs(MP3_DIR)
 
-current_stream = []  # Stores the currently playing song or "random"
+current_stream = {"choice": None, "start_time": None}  # Stores the current song and playback start time
 
 @app.route("/stream.mp3")
 def stream():
-    """Streams music based on the current selection."""
+    """Streams music based on the current selection and syncs playback."""
     def generate():
         while True:
             songs = get_song_list()
@@ -94,20 +97,21 @@ def stream():
                 yield b"No songs available."
                 break
 
-            if current_stream:
-                choice = current_stream.pop(0)
-                if choice == "random":
+            if current_stream["choice"]:
+                if current_stream["choice"] == "random":
                     song = random.choice(songs)
                 else:
-                    song = next((s for s in songs if s['filename'] == choice), None)
+                    song = next((s for s in songs if s['filename'] == current_stream["choice"]), None)
                 if not song:
                     continue
-            else:
-                song = random.choice(songs)
 
-            file_path = os.path.join(MP3_DIR, song["filename"])
-            with open(file_path, "rb") as f:
-                yield from f
+                file_path = os.path.join(MP3_DIR, song["filename"])
+                start_time = current_stream["start_time"]
+                elapsed_time = time.time() - start_time if start_time else 0
+
+                with open(file_path, "rb") as f:
+                    f.seek(int(elapsed_time * 128000 / 8), os.SEEK_SET)  # Estimate byte offset for elapsed time
+                    yield from f
 
     return Response(generate(), mimetype="audio/mpeg")
 
