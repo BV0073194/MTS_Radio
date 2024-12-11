@@ -1,21 +1,11 @@
-from flask import Flask, request, Response
+from flask import Flask, Response
 import os
-import requests
 import random
-
-app = Flask(__name__)
-
-# Directory where MP3 files are stored
-MP3_DIR = "./mp3_files"
-if not os.path.exists(MP3_DIR):
-    os.makedirs(MP3_DIR)  # Create directory if it doesn't exist
-
+import requests
+import threading
 
 def get_song_list():
-    """
-    Reads the MP3 files and extracts song titles and artists from filenames.
-    Assumes filenames are formatted as "Artist - Title.mp3".
-    """
+    """Reads the MP3 files and extracts song titles and artists from filenames."""
     songs = []
     for filename in os.listdir(MP3_DIR):
         if filename.endswith(".mp3"):
@@ -25,136 +15,106 @@ def get_song_list():
             songs.append({"filename": filename, "artist": artist, "title": title})
     return songs
 
-
-@app.route("/")
-def main_menu():
-    """
-    Main menu with options to play music, upload music, or scan for new music.
-    """
-    menu_text = """
-    <h1>Welcome to MTS Radio!!!</h1>
-    <hr>
-    <p>1) <a href="/menu/play">Play Music</a> (-> takes us to our music menu to select songs or play random)</p>
-    <p>2) <a href="/menu/upload">Upload Music</a> (-> allows us to upload a song by downloading it from a URL directly)</p>
-    <p>3) <a href="/menu/scan">Scan For New Music</a></p>
-    <hr>
-    """
-    return menu_text
-
-
-@app.route("/menu/play")
-def play_menu():
-    """
-    Music menu to select a song or play randomly.
-    """
-    songs = get_song_list()
-    menu_text = "<h2>Music Menu</h2><hr>"
-    for i, song in enumerate(songs, 1):
-        menu_text += f"<p>{i}) <a href='/play/{i}'>{song['title']} - {song['artist']}</a></p>"
-    menu_text += "<p>R) <a href='/play/random'>Random Cycle</a></p>"
-    menu_text += "<hr><p><a href='/'>Back to Main Menu</a></p>"
-    return menu_text
-
-
-@app.route("/menu/upload")
-def upload_menu():
-    """
-    Menu to upload music via a direct URL.
-    """
-    upload_form = """
-    <h2>Upload Music</h2><hr>
-    <form action="/upload" method="post">
-        <label for="url">Enter MP3 URL:</label><br>
-        <input type="url" id="url" name="url" required style="width: 300px;"><br><br>
-        <button type="submit">Upload</button>
-    </form>
-    <hr>
-    <p><a href='/'>Back to Main Menu</a></p>
-    """
-    return upload_form
-
-
-@app.route("/upload", methods=["POST"])
-def upload_music():
-    """
-    Handles downloading an MP3 from a given URL and saving it to the directory.
-    """
-    url = request.form.get("url")
-    if not url or not url.endswith(".mp3"):
-        return "Invalid URL. Please provide a valid MP3 URL.", 400
-
+def download_music(url):
+    """Downloads a music file from a direct URL."""
     try:
         response = requests.get(url, stream=True)
-        if response.status_code == 200:
-            filename = url.split("/")[-1]
-            file_path = os.path.join(MP3_DIR, filename)
-            with open(file_path, "wb") as f:
+        if response.status_code == 200 and 'content-type' in response.headers and 'audio' in response.headers['content-type']:
+            filename = os.path.basename(url.split("?")[0])  # Extract filename from URL
+            if not filename.endswith(".mp3"):
+                filename += ".mp3"
+            filepath = os.path.join(MP3_DIR, filename)
+            with open(filepath, "wb") as f:
                 for chunk in response.iter_content(chunk_size=1024):
-                    if chunk:
-                        f.write(chunk)
-            return f"Music uploaded successfully: {filename}<br><a href='/'>Back to Main Menu</a>"
+                    f.write(chunk)
+            print(f"Downloaded: {filename}")
         else:
-            return "Failed to download the file. Please check the URL.", 400
+            print("Failed to download: Invalid URL or not an audio file.")
     except Exception as e:
-        return f"An error occurred: {str(e)}", 500
+        print(f"Error downloading file: {e}")
 
+def cli_menu():
+    """Displays the CLI menu and handles user interaction."""
+    while True:
+        print("""
+ Welcome to MTS Radio!!!
+-------------------------------
 
-@app.route("/menu/scan")
-def scan_menu():
-    """
-    Scans the directory for new music and displays the updated list.
-    """
-    songs = get_song_list()
-    menu_text = "<h2>Scan Complete! Here is the updated list:</h2><hr>"
-    for i, song in enumerate(songs, 1):
-        menu_text += f"<p>{i}) {song['title']} - {song['artist']}</p>"
-    menu_text += "<hr><p><a href='/'>Back to Main Menu</a></p>"
-    return menu_text
+1) Play Music (-> takes us to our music menu to select songs or play random)
+2) Upload Music (-> allows us to upload a song by downloading it from the URL directly)
+3) Scan For New Music
 
+-------------------------------
+""")
+        choice = input("Choose an option: ")
 
-@app.route("/play/<choice>")
-def play(choice):
-    """
-    Plays a selected song or randomly cycles through all songs.
-    """
-    songs = get_song_list()
-    if choice.isdigit():
-        choice = int(choice)
-        if 1 <= choice <= len(songs):
-            selected_song = songs[choice - 1]
-            return stream_song(selected_song)
+        if choice == "1":
+            print("\nAvailable Songs:")
+            songs = get_song_list()
+            for i, song in enumerate(songs, 1):
+                print(f"{i}) {song['title']} - {song['artist']}")
+            print("R) Random Cycle")
+            song_choice = input("Enter the song number or 'R' for random: ")
+            if song_choice.lower() == "r":
+                print("Starting random cycle...")
+                current_stream.append("random")
+            elif song_choice.isdigit() and 1 <= int(song_choice) <= len(songs):
+                selected_song = songs[int(song_choice) - 1]
+                print(f"Playing: {selected_song['title']} - {selected_song['artist']}")
+                current_stream.append(selected_song['filename'])
+            else:
+                print("Invalid choice.")
+
+        elif choice == "2":
+            url = input("Enter the URL of the music file: ")
+            download_music(url)
+
+        elif choice == "3":
+            print("Scanning for new music...")
+            print(f"Found {len(get_song_list())} songs in the library.")
+
         else:
-            return "Invalid song number. Please select a valid number from the menu.", 400
-    elif choice.lower() == "random":
-        return random_cycle(songs)
-    else:
-        return "Invalid choice. Please select a valid number or 'R' for random cycle.", 400
+            print("Invalid choice. Please try again.")
 
+# Flask server for streaming
+app = Flask(__name__)
+MP3_DIR = "./mp3_files"
+if not os.path.exists(MP3_DIR):
+    os.makedirs(MP3_DIR)
 
-def stream_song(song):
-    """
-    Streams the selected song.
-    """
-    file_path = os.path.join(MP3_DIR, song["filename"])
-    def generate():
-        with open(file_path, "rb") as f:
-            yield from f
-    return Response(generate(), mimetype="audio/mpeg")
+current_stream = []  # Stores the currently playing song or "random"
 
-
-def random_cycle(songs):
-    """
-    Streams songs randomly in a loop.
-    """
+@app.route("/stream.mp3")
+def stream():
+    """Streams music based on the current selection."""
     def generate():
         while True:
-            song = random.choice(songs)
+            songs = get_song_list()
+            if not songs:
+                yield b"No songs available."
+                break
+
+            if current_stream:
+                choice = current_stream.pop(0)
+                if choice == "random":
+                    song = random.choice(songs)
+                else:
+                    song = next((s for s in songs if s['filename'] == choice), None)
+                if not song:
+                    continue
+            else:
+                song = random.choice(songs)
+
             file_path = os.path.join(MP3_DIR, song["filename"])
             with open(file_path, "rb") as f:
                 yield from f
+
     return Response(generate(), mimetype="audio/mpeg")
 
+# Start the Flask server in a separate thread
+server_thread = threading.Thread(target=lambda: app.run(host="0.0.0.0", port=5000))
+server_thread.daemon = True
+server_thread.start()
 
-if __name__ == "__main__":
-    print("Place your MP3 files in the 'mp3_files' folder.")
-    app.run(host="0.0.0.0", port=5000)
+# Start the CLI menu
+cli_menu()
