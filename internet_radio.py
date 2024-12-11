@@ -4,6 +4,7 @@ import random
 import requests
 import threading
 import time
+from pyngrok import ngrok
 
 def get_song_list():
     """Reads the MP3 files and extracts song titles and artists from filenames."""
@@ -115,8 +116,13 @@ def stream():
 
     return Response(generate(), mimetype="audio/mpeg")
 
-# Start the Flask server in a separate thread
-server_thread = threading.Thread(target=lambda: app.run(host="0.0.0.0", port=5000))
+# Start the Flask server with ngrok
+def start_server_with_ngrok():
+    public_url = ngrok.connect(5000)
+    print(f"ngrok public URL: {public_url}")
+    app.run(host="0.0.0.0", port=5000)
+
+server_thread = threading.Thread(target=start_server_with_ngrok)
 server_thread.daemon = True
 server_thread.start()
 
