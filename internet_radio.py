@@ -1,5 +1,6 @@
-from flask import Flask, Response
+from flask import Flask, request, Response
 import os
+import requests
 import random
 
 app = Flask(__name__)
@@ -26,16 +27,88 @@ def get_song_list():
 
 
 @app.route("/")
-def menu():
+def main_menu():
     """
-    Display the menu with available songs and options.
+    Main menu with options to play music, upload music, or scan for new music.
+    """
+    menu_text = """
+    <h1>Welcome to MTS Radio!!!</h1>
+    <hr>
+    <p>1) <a href="/menu/play">Play Music</a> (-> takes us to our music menu to select songs or play random)</p>
+    <p>2) <a href="/menu/upload">Upload Music</a> (-> allows us to upload a song by downloading it from a URL directly)</p>
+    <p>3) <a href="/menu/scan">Scan For New Music</a></p>
+    <hr>
+    """
+    return menu_text
+
+
+@app.route("/menu/play")
+def play_menu():
+    """
+    Music menu to select a song or play randomly.
     """
     songs = get_song_list()
-    menu_text = "Internet Radio Menu:<br><br>"
+    menu_text = "<h2>Music Menu</h2><hr>"
     for i, song in enumerate(songs, 1):
-        menu_text += f"{i}) {song['title']} - {song['artist']}<br>"
-    menu_text += "<br>R) Random Cycle<br>"
-    menu_text += "<br>Select a song number or 'R' to stream songs randomly: /play/<number> or /play/random"
+        menu_text += f"<p>{i}) <a href='/play/{i}'>{song['title']} - {song['artist']}</a></p>"
+    menu_text += "<p>R) <a href='/play/random'>Random Cycle</a></p>"
+    menu_text += "<hr><p><a href='/'>Back to Main Menu</a></p>"
+    return menu_text
+
+
+@app.route("/menu/upload")
+def upload_menu():
+    """
+    Menu to upload music via a direct URL.
+    """
+    upload_form = """
+    <h2>Upload Music</h2><hr>
+    <form action="/upload" method="post">
+        <label for="url">Enter MP3 URL:</label><br>
+        <input type="url" id="url" name="url" required style="width: 300px;"><br><br>
+        <button type="submit">Upload</button>
+    </form>
+    <hr>
+    <p><a href='/'>Back to Main Menu</a></p>
+    """
+    return upload_form
+
+
+@app.route("/upload", methods=["POST"])
+def upload_music():
+    """
+    Handles downloading an MP3 from a given URL and saving it to the directory.
+    """
+    url = request.form.get("url")
+    if not url or not url.endswith(".mp3"):
+        return "Invalid URL. Please provide a valid MP3 URL.", 400
+
+    try:
+        response = requests.get(url, stream=True)
+        if response.status_code == 200:
+            filename = url.split("/")[-1]
+            file_path = os.path.join(MP3_DIR, filename)
+            with open(file_path, "wb") as f:
+                for chunk in response.iter_content(chunk_size=1024):
+                    if chunk:
+                        f.write(chunk)
+            return f"Music uploaded successfully: {filename}<br><a href='/'>Back to Main Menu</a>"
+        else:
+            return "Failed to download the file. Please check the URL.", 400
+    except Exception as e:
+        return f"An error occurred: {str(e)}", 500
+
+
+@app.route("/menu/scan")
+def scan_menu():
+    """
+    Scans the directory for new music and displays the updated list.
+    """
+    songs = get_song_list()
+    menu_text = "<h2>Scan Complete! Here is the updated list:</h2><hr>"
+    for i, song in enumerate(songs, 1):
+        menu_text += f"<p>{i}) {song['title']} - {song['artist']}</p>"
+    menu_text += "<hr><p><a href='/'>Back to Main Menu</a></p>"
     return menu_text
 
 
